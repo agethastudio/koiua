@@ -13,24 +13,19 @@ jobs:
     steps:
       - name: Telegram - Workflow Started
         run: |
-          Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
             -Method Post `
             -Body @{
               chat_id = "${{ secrets.TG_CHAT_ID }}"
-              text = "🚀 RDP Workflow STARTED\n⏱️ VM baru sedang disiapkan..."
+              text = "🚀 AGOYY workflow started. VM sedang disiapkan..."
             }
 
-      - name: Configure RDP
+      - name: Enable RDP
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+            -Name fDenyTSConnections -Value 0
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "UserAuthentication" -Value 0 -Force
-
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
 
           Restart-Service TermService -Force
 
@@ -63,37 +58,30 @@ jobs:
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-rdp-$env:GITHUB_RUN_ID
+            --hostname=gh-agoyy-$env:GITHUB_RUN_ID
 
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Telegram - RDP Ready
         run: |
-          $msg = @"
-🖥️ RDP READY
+          $msg = "🖥️ AGOYY RDP READY`nIP: $env:TAILSCALE_IP`nUser: $env:RDP_USER`nPass: $env:RDP_PASS`n⏱️ Aktif ±6 jam"
 
-IP  : $env:TAILSCALE_IP
-User: $env:RDP_USER
-Pass: $env:RDP_PASS
-
-⏱️ Active ±6 jam
-"@
-
-          Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
-            -Method Post `
-            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text=$msg }
-
-      - name: Telegram - 5 Minutes Warning
-        run: |
-          Start-Sleep -Seconds 19800   # 5 jam 30 menit
-          Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
             -Method Post `
             -Body @{
-              chat_id="${{ secrets.TG_CHAT_ID }}"
-              text="⚠️ RDP akan MATI dalam ±5 menit\n💾 Save kerjaan u sekarang"
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = $msg
+            }
+
+      - name: Telegram - 5 Minute Warning
+        run: |
+          Start-Sleep -Seconds 19800
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+            -Method Post `
+            -Body @{
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = "⚠️ AGOYY RDP akan mati dalam 5 menit. Save kerjaan sekarang."
             }
 
       - name: Keep Alive
@@ -105,10 +93,9 @@ Pass: $env:RDP_PASS
       - name: Telegram - Workflow Failed
         if: failure()
         run: |
-          Invoke-RestMethod `
-            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
             -Method Post `
             -Body @{
-              chat_id="${{ secrets.TG_CHAT_ID }}"
-              text="❌ RDP WORKFLOW FAILED\nCek GitHub Actions log"
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = "❌ AGOYY workflow FAILED. Cek GitHub Actions log."
             }
