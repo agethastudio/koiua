@@ -2,101 +2,113 @@ name: AGOYY
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
 
 jobs:
   secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Telegram - Workflow Started
         run: |
-          # Enable RDP & disable NLA
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+            -Method Post `
+            -Body @{
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = "🚀 RDP Workflow STARTED\n⏱️ VM baru sedang disiapkan..."
+            }
+
+      - name: Configure RDP
+        run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" -Value 0 -Force
 
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
             -Name "UserAuthentication" -Value 0 -Force
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "SecurityLayer" -Value 0 -Force
-
-          # Firewall rule
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
 
-          Restart-Service -Name TermService -Force
+          Restart-Service TermService -Force
 
-      - name: Create RDP User (yogaxd)
+      - name: Create User
         run: |
-          $username = "yogaxd"
-          $password = "yogaxd123"
+          $user = "yogaxd"
+          $pass = "yogaxd123"
+          $secure = ConvertTo-SecureString $pass -AsPlainText -Force
 
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-
-          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
-              Remove-LocalUser -Name $username
+          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+            Remove-LocalUser $user
           }
 
-          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          New-LocalUser $user -Password $secure -AccountNeverExpires
+          Add-LocalGroupMember Administrators $user
+          Add-LocalGroupMember "Remote Desktop Users" $user
 
-          echo "RDP_USER=$username" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+          echo "RDP_USER=$user" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
 
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest `
+            -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" `
+            -OutFile "$env:TEMP\ts.msi"
 
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          Start-Process msiexec.exe -ArgumentList "/i $env:TEMP\ts.msi /quiet /norestart" -Wait
 
-      - name: Establish Tailscale Connection
+      - name: Connect Tailscale
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-runner-$env:GITHUB_RUN_ID
+            --hostname=gh-rdp-$env:GITHUB_RUN_ID
 
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned"
-              exit 1
-          }
-
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      - name: Verify RDP Accessibility
+      - name: Telegram - RDP Ready
         run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $test.TcpTestSucceeded) {
-              Write-Error "RDP port 3389 not reachable"
-              exit 1
-          }
-          Write-Host "RDP port reachable ✅"
+          $msg = @"
+🖥️ RDP READY
 
-      - name: Maintain Connection
+IP  : $env:TAILSCALE_IP
+User: $env:RDP_USER
+Pass: $env:RDP_PASS
+
+⏱️ Active ±6 jam
+"@
+
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+            -Method Post `
+            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text=$msg }
+
+      - name: Telegram - 5 Minutes Warning
         run: |
-          Write-Host ""
-          Write-Host "===== RDP ACCESS ====="
-          Write-Host "IP       : $env:TAILSCALE_IP"
-          Write-Host "Username : $env:RDP_USER"
-          Write-Host "Password : $env:RDP_PASS"
-          Write-Host "======================"
-          Write-Host ""
+          Start-Sleep -Seconds 19800   # 5 jam 30 menit
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+            -Method Post `
+            -Body @{
+              chat_id="${{ secrets.TG_CHAT_ID }}"
+              text="⚠️ RDP akan MATI dalam ±5 menit\n💾 Save kerjaan u sekarang"
+            }
 
+      - name: Keep Alive
+        run: |
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP masih aktif..."
-              Start-Sleep -Seconds 300
+            Start-Sleep -Seconds 300
           }
+
+      - name: Telegram - Workflow Failed
+        if: failure()
+        run: |
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+            -Method Post `
+            -Body @{
+              chat_id="${{ secrets.TG_CHAT_ID }}"
+              text="❌ RDP WORKFLOW FAILED\nCek GitHub Actions log"
+            }
