@@ -2,8 +2,6 @@ name: AGOYY
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
 jobs:
   secure-rdp:
@@ -13,83 +11,89 @@ jobs:
     steps:
       - name: Telegram - Workflow Started
         run: |
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
             -Method Post `
-            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text="🚀 AGOYY started. VM disiapkan..." }
+            -Body @{
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = "🚀 AGOYY started. VM sedang disiapkan..."
+            }
 
-      - name: Enable RDP
+      - name: Configure RDP
         run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-            -Name fDenyTSConnections -Value 0
-          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0 -Force
+
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule `
+            name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+
           Restart-Service TermService -Force
 
-      - name: Create User (PASSWORD FIXED)
+      - name: Create RDP User (STABLE)
         run: |
-          $user = "yogaxd"
+          Add-Type -AssemblyName System.Security
 
-          $upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
-          $lower = "abcdefghijkmnopqrstuvwxyz"
-          $num   = "23456789"
-          $sym   = "!@#$%^&*()-_=+"
-
-          do {
-            $pass = (
-              ($upper.ToCharArray() | Get-Random -Count 4) +
-              ($lower.ToCharArray() | Get-Random -Count 6) +
-              ($num.ToCharArray()   | Get-Random -Count 4) +
-              ($sym.ToCharArray()   | Get-Random -Count 2)
-            ) -join ""
-          } while ($pass.ToLower().Contains($user.ToLower()))
-
-          $secure = ConvertTo-SecureString $pass -AsPlainText -Force
-
-          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
-            Remove-LocalUser $user
+          $charSet = @{
+            Upper   = [char[]](65..90)
+            Lower   = [char[]](97..122)
+            Number  = [char[]](48..57)
+            Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
           }
 
-          New-LocalUser -Name $user -Password $secure -PasswordNeverExpires
-          Add-LocalGroupMember Administrators $user
-          Add-LocalGroupMember "Remote Desktop Users" $user
+          $raw = @()
+          $raw += $charSet.Upper   | Get-Random -Count 4
+          $raw += $charSet.Lower   | Get-Random -Count 4
+          $raw += $charSet.Number  | Get-Random -Count 4
+          $raw += $charSet.Special | Get-Random -Count 4
 
-          echo "RDP_USER=$user" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
+          $password = -join ($raw | Sort-Object { Get-Random })
+          $secure   = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser "RDP"
+          }
+
+          New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
+          Add-LocalGroupMember Administrators "RDP"
+          Add-LocalGroupMember "Remote Desktop Users" "RDP"
+
+          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       - name: Install Tailscale
         run: |
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" `
+          Invoke-WebRequest `
+            -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" `
             -OutFile "$env:TEMP\ts.msi"
-          Start-Process msiexec.exe -ArgumentList "/i $env:TEMP\ts.msi /quiet /norestart" -Wait
+
+          Start-Process msiexec.exe `
+            -ArgumentList "/i $env:TEMP\ts.msi /quiet /norestart" `
+            -Wait
 
       - name: Connect Tailscale
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
             --hostname=gh-agoyy-$env:GITHUB_RUN_ID
+
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Telegram - RDP Ready
         run: |
-          $msg = "🖥️ AGOYY RDP READY`nIP: $env:TAILSCALE_IP`nUser: $env:RDP_USER`nPass: $env:RDP_PASS`n⏱️ ±6 jam"
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
+          $msg = "🖥️ AGOYY RDP READY`nIP: $env:TAILSCALE_IP`nUser: RDP`nPass: $env:RDP_PASS`n⏱️ ±6 jam"
+          Invoke-RestMethod `
+            -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
             -Method Post `
-            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text=$msg }
-
-      - name: Telegram - 5 Minute Warning
-        run: |
-          Start-Sleep -Seconds 19800
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
-            -Method Post `
-            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text="⚠️ AGOYY mati 5 menit lagi. Save sekarang." }
+            -Body @{
+              chat_id = "${{ secrets.TG_CHAT_ID }}"
+              text = $msg
+            }
 
       - name: Keep Alive
         run: |
-          while ($true) { Start-Sleep -Seconds 300 }
-
-      - name: Telegram - Workflow Failed
-        if: failure()
-        run: |
-          Invoke-RestMethod -Uri "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" `
-            -Method Post `
-            -Body @{ chat_id="${{ secrets.TG_CHAT_ID }}"; text="❌ AGOYY FAILED. Cek Actions log." }
+          while ($true) {
+            Start-Sleep -Seconds 300
+          }
